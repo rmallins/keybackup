@@ -1,0 +1,53 @@
+#!/bin/bash
+# Backup private key data to hard copy.
+#     usage: key2paper <ASCII key file>
+# Take an ASCII armoured GPG key file as input, and output as
+# a collage of QR codes to fit on a single A4 sheet of paper.
+#
+# That sheet may be stored in a safe (for example), for later
+# scanning and reconstruction using paper2key.
+
+set -e
+version=0.9.0
+error() { echo "ERROR: $*">&2; exit 1; }
+[ $# -eq 1 ] || error "usage: key2paper <ASCII key file>"
+[ "$1" = "-v" ] && { echo "$(basename "$0") v$version"; exit 0; }
+key_file=$1
+
+# Because we're storing sensitive data, shred before deletion.
+tmpd=$(mktemp -d)
+trap 'shred "$tmpd"/*; rm -rf "$tmpd"' EXIT
+
+# Split input file into numbered 2000 byte chunks, where
+# each chunk has a numeric suffix.  Use --line-bytes= rather
+# than --bytes= to ensure complete lines in output for ease
+# of reassembly.
+bname=$(basename "$key_file")
+split --line-bytes=2000 --numeric-suffixes "$key_file" "${tmpd}/${bname}_"
+
+aChunks=( "${tmpd}/${bname}"_* )
+[ ${#aChunks[@]} -gt 6 ] &&
+   error "Input too large; cannot montage more than 6 chunks."
+
+# For each chunk:
+for fname in "${aChunks[@]}"; do
+   # Add <filename>\n header.
+   basename "$fname" > "${fname}.new"
+   cat "$fname" >> "${fname}.new"
+   mv "${fname}.new" "$fname"
+
+   # QR encode.
+   # 2331 bytes of data can be encoded with version 40, ECC level "M"
+   qrencode --level=M -t png -o "${fname}_qr.png" < "$fname"
+done
+
+# Create a 2x3 montage of the png files for printing.
+banner="File: \"$bname\" split, qr-encoded and montaged @ $(date -Is)"
+aMontageParam=(
+   -title "$banner"
+   -geometry +0+0       # Preserve original dimensions.
+   -tile 2x3            # Two columns x 3 rows (good for portrait).
+)
+montage "${aMontageParam[@]}" "${tmpd}"/*_qr.png "${bname}.png"
+
+echo "Key $key_file has been successfully encoded to ${bname}.png"

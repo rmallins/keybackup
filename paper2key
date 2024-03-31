@@ -1,0 +1,75 @@
+#!/bin/bash
+# Restore private key data from hard copy.
+#     usage: paper2key <PNG or JPEG scan of data from key2paper>
+# Provide this tool with a scan of the printed data from key2paper
+# and it will output the ASCII armoured GPG key file data that was
+# originally provided to key2paper.
+
+set -e
+version=0.9.0
+error() { echo "ERROR: $*">&2; exit 1; }
+[ $# -eq 1 ] || error "usage: paper2key <PNG or JPEG scan of data from key2paper>"
+[ "$1" = "-v" ] && { echo "$(basename "$0") v$version"; exit 0; }
+
+# $1 is expected to be a single scanned image containing tiled QR codes.
+montage_file=$1
+
+# Because we're storing sensitive data, shred before deletion.
+tmpd=$(mktemp -d)
+trap 'shred "$tmpd"/*; rm -rf "$tmpd"' EXIT
+
+# zbarimag outputs to stdout and prefixes each QR code with "QR-Code:"
+# followed immediately by file data.
+# Thanks to key2paper the first line of filedata is the chunk filename:
+#
+# $ zbarimg testkey_priv.asc.png |grep --context=1 QR-Code
+# QR-Code:testkey_priv.asc_03
+# uFt3yF9diwYdRpZ2wkl83na512Lw61HxSMzGB9q/nQXzOPgu3l4kM4kCNgQYAQoA
+# --
+#
+# QR-Code:testkey_priv.asc_02
+# BhaW6JkR/cbEnN/9/iVi/ZexNrXS9SRVsNgfQaH6CkvCQRUkiYom3HVM3A2DD7IP
+# --
+#
+# QR-Code:testkey_priv.asc_01
+# bUXyjyABT87Vnh5DtZ01V0WXiAIs/3CCwt73wdR9VUl6O4bR+s16HnHNbJGMip+7
+# --
+#
+# QR-Code:testkey_priv.asc_00
+# -----BEGIN PGP PRIVATE KEY BLOCK-----
+# scanned 4 barcode symbols from 1 images in 0.32 seconds
+#
+# $
+
+# Zbarimg outputs each file to stdout with a heading: "QR-Code:" and a trailing "\n".
+zbarimg -q "$montage_file" > "${tmpd}/infile"
+
+# Derive original filename from 1st QR-Code line of ${tmp}/infile.
+original_fname=$( awk -F':' '/^QR-Code/ {gsub(/_[0-9]+$/,"",$2); print $2; exit 0}' "${tmpd}/infile" )
+
+# Split the input file using the "QR-Code:" header data into files in $tmpd using
+# the names from each delimiting header as file name in ${tmpd}/${fname}
+awk -F':' -v dir="$tmpd" '
+   BEGIN{fpath=dir"/default"}
+   /^QR-Code:/ {
+      fname=$2
+      fpath=dir"/"fname
+      next
+   }
+   { print > fpath }
+' < "${tmpd}/infile"
+
+aChunks=( "${tmpd}/${original_fname}"* )
+
+# zbarimg appended a blank line to each file at decode so remove it.
+sed -i '$ d' "${aChunks[@]}"
+
+# Concatenate chunks to reconstruct original file.
+if [ -e "$original_fname" ]; then
+   printf "%s already exists. Overwrite [y/N]? " "$original_fname"
+   read -r yesno
+   [ "y" != "$yesno" ] && [ "Y" != "$yesno" ] && exit 0
+fi
+cat "${aChunks[@]}" > "$original_fname"
+
+echo "$original_fname has been successfully reconstructed from $montage_file"
