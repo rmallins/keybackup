@@ -1,0 +1,12 @@
+Source: keybackup
+Section: devel
+Priority: optional
+Maintainer: Robin Mallinson <robin.mallinson+dev@gmail.com>
+Build-Depends: debhelper (>= 9)
+
+Package: keybackup
+Architecture: all
+Depends: coreutils, qrencode, imagemagick, zbar-tools
+Description: Backup GPG keys to paper.
+ Backup GPG private key files to paper hard-copy using QR codes.
+ Restore later from a PDF/PNG/JPEG scan.
